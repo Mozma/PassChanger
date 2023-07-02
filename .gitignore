@@ -3,3 +3,6 @@ info.log
 pwd.txt
 Book1.xlsx
 result.xlsx
+.vscode/settings.json
+pylintrc
+__pycache__/PassChanger.cpython-311.pyc
