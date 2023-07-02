@@ -1,3 +1,6 @@
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning) 
+
 import sys
 import os
 import telnetlib
@@ -17,19 +20,34 @@ SHEET_NAME = "TestTermux"
 
 WHATIF_MODE = None
 
-def get_logger(name: str, log_file: str, level: int = logging.INFO):
+logInfo: logging.Logger
+logError: logging.Logger
+
+def setup_loggers():
+    """Настройка логирования"""
+    global logInfo, logError
+
+    current_day = datetime.datetime.now().strftime("%Y_%m_%d")
+    log_info_file = f"Logs/Info/{current_day}_info.log"
+    log_error_file = f"Logs/Errors/{current_day}_error.log"
+
+    os.makedirs(os.path.dirname(log_info_file), exist_ok=True)
+    os.makedirs(os.path.dirname(log_error_file), exist_ok=True)
+    
+    logInfo = get_logger(log_info_file, logging.INFO)
+    logError = get_logger(log_error_file, logging.ERROR)
+
+
+def get_logger(log_file: str, level: int = logging.INFO):
     """Создаёт новый логер для записи в разные файлы в зависимости от уровня сообщения"""
     handler = logging.FileHandler(log_file, encoding="utf-8")
-    handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+    handler.setFormatter(logging.Formatter("[%(asctime)s] %(message)s", "%Y-%m-%d %H:%M:%S"))
 
-    logger = logging.getLogger(name)
+    logger = logging.getLogger(log_file)
     logger.setLevel(level)
     logger.addHandler(handler)
 
     return logger
-
-logInfo = get_logger("info", "info.log", logging.INFO)
-logError = get_logger("error", "error.log", logging.ERROR)
 
 def connect_telnet(ip, port, username, password, new_password) -> bool:
     """Подключение Telnet для смены пароля"""
@@ -39,11 +57,17 @@ def connect_telnet(ip, port, username, password, new_password) -> bool:
         tn.write(username.encode("utf-8") + b"\n")
         tn.read_until(b"Password: ")
         tn.write(password.encode("utf-8") + b"\n")
-
+        
+        output = tn.read_until(b"# ", timeout=TIMEOUT)
+        
+        # Обработка ошибки авторизации
+        if b"Login incorrect" in output:
+            logError.error(f"{ip}:{port} Telnet: Неверное имя пользователя или пароль")
+            return False
+        
         if WHATIF_MODE:
             logInfo.info(f"WHATIF: {ip} - Пароль будет изменён на: {new_password}")
         else:
-            tn.read_until(b"# ", timeout=TIMEOUT)
             tn.write(b"password\n")
             tn.read_until(b"New password: ")
             tn.write(new_password.encode("utf-8") + b"\n")
@@ -66,7 +90,7 @@ def connect_ssh(ip, port, username, password, new_password) -> bool:
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         client.connect(ip, port, username=username, password=password, timeout=TIMEOUT)
-
+        
         if WHATIF_MODE:
             logInfo.info(f"WHATIF: {ip} - Пароль будет изменён на: {new_password}")
         else:
@@ -80,6 +104,9 @@ def connect_ssh(ip, port, username, password, new_password) -> bool:
 
         client.close()
         return True
+    except paramiko.AuthenticationException as e:
+        logError.error(f"{ip}:{port} SSH: Ошибка авторизации - {str(e)}")
+        return False
     except Exception as e:
         logError.error(f"{ip}:{port} SSH: Не удалось подключиться к устройству - {str(e)}")
         return False
@@ -101,7 +128,7 @@ def create_results_file(results) -> None:
     if sheet_name == workbook.sheetnames[-1]:
         headers = ["ip", "old_password", "new_password", "changed"]
         for col_num, header in enumerate(headers, 1):
-            column_letter = openpyxl.utils.get_column_letter(col_num) # type: ignore
+            column_letter = openpyxl.utils.get_column_letter(col_num)  # type: ignore
             worksheet[column_letter + "1"] = header
 
     # Запись данных
@@ -117,6 +144,7 @@ def create_results_file(results) -> None:
 def main() -> None:
     """Главный метод"""
     global WHATIF_MODE
+    setup_loggers()
 
     # Чтение аргументов и установка режима WHATIF
     logInfo.info("Скрипт запущен")
@@ -127,7 +155,7 @@ def main() -> None:
         args.remove("-whatif")
 
     if len(args) < 2:
-        print("Usage: passchanger.py [-whatif] excel_file.xlsx passwords.txt")
+        print("Usage: PassChanger.py [-whatif] <excel_file> <passwords_file>")
         return
 
     excel_file = args[0]
@@ -144,16 +172,23 @@ def main() -> None:
 
     results = []
 
+    # Чтение паролей из файла
+    with open(password_file, "r", encoding="UTF-8") as file:
+        passwords = file.readlines()
+        passwords = [password.strip() for password in passwords]
+        password_count = len(passwords)
+
     # Итеративная обработка записей с попыткой подключения через Telnet или SSH
     for index, row in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=1):
         ip = row[ip_column_index]
         port = row[port_column_index]
         password = row[password_column_index]
 
-        with open(password_file, "r", encoding="UTF-8") as file:
-            new_password = file.readline().strip()
+        # Если паролей меньше чем устройств, то начинает сначала
+        password_index = (index - 1) % password_count
+        new_password = passwords[password_index]
 
-        print(f"{index}/{sheet.max_row-1} Подключение к устройству {ip}:{port}")
+        print(f"{index}/{sheet.max_row-1} Подключение к устройству {ip}:{port} {password}")
         password_changed = (
             connect_telnet(ip, port, USER_LOGIN, password, new_password) 
             or connect_ssh(ip, port, USER_LOGIN, password, new_password)
