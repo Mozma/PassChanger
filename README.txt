@@ -5,9 +5,9 @@
 
 2. Параметры запуска:
     Команда: 
-        passchanger.py [-whatif] excel_file.xlsx passwords.txt
+        PassChanger.py [-whatif] <excel_file> <passwords_file>
     Параметры:
         -whatif             Пробует просто подключиться используя полученные пароли. Логирует результат
-        excel_file.xlsx     Путь до excel файла с паролями и ip адресами
-        passwords.txt       Путь до текстового файла с паролями
+        <excel_file>        Путь до excel файла с паролями и ip адресами
+        <passwords_file>    Путь до текстового файла с новыми паролями
 

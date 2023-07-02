@@ -1,8 +1,6 @@
-error.log
-info.log
 pwd.txt
 Book1.xlsx
 result.xlsx
-.vscode/settings.json
+.vscode/
+Logs/
 pylintrc
-__pycache__/PassChanger.cpython-311.pyc
