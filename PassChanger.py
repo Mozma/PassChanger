@@ -141,6 +141,17 @@ def create_results_file(results) -> None:
     workbook.save(output_file)
     logInfo.info(f"Результаты сохранены в файле: {output_file}")
 
+def ask_yes_no_question(question):
+    """Подтверждение выполнения"""
+    valid = {"yes": True, "y": True, "ye": True, "no": False, "n": False}
+    while True:
+        sys.stdout.write(question + " [y/n] ")
+        choice = input().lower()
+        if choice in valid:
+            return valid[choice]
+        else:
+            sys.stdout.write("Пожалуйста, ответьте 'yes' или 'no'\n")
+
 def main() -> None:
     """Главный метод"""
     global WHATIF_MODE
@@ -172,6 +183,10 @@ def main() -> None:
 
     results = []
 
+    if not WHATIF_MODE:
+        if not ask_yes_no_question(f"Вы действительно хотите изменить {sheet.max_row-1} паролей?"):
+            sys.exit()
+
     # Чтение паролей из файла
     with open(password_file, "r", encoding="UTF-8") as file:
         passwords = file.readlines()
@@ -188,7 +203,7 @@ def main() -> None:
         password_index = (index - 1) % password_count
         new_password = passwords[password_index]
 
-        print(f"{index}/{sheet.max_row-1} Подключение к устройству {ip}:{port} {password}")
+        print(f"{index}/{sheet.max_row-1} Подключение к устройству {ip}:{port}")
         password_changed = (
             connect_telnet(ip, port, USER_LOGIN, password, new_password) 
             or connect_ssh(ip, port, USER_LOGIN, password, new_password)
