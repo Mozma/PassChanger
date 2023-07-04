@@ -10,15 +10,15 @@ import logging
 import datetime
 
 USER_LOGIN = "u0_a292"
-USER_PASSWORD = None
 TIMEOUT = 3
 
 IP_COLUMN_NAME = "ip"
 PORT_COLUMN_NAME = "port"
 PASSWORD_COLUMN_NAME = "password"
-SHEET_NAME = "TestTermux"
+SHEET_NAME = "PassSheet"
 
 WHATIF_MODE = None
+USE_PORT = False
 
 logInfo: logging.Logger
 logError: logging.Logger
@@ -49,10 +49,19 @@ def get_logger(log_file: str, level: int = logging.INFO):
 
     return logger
 
-def connect_telnet(ip, port, username, password, new_password) -> bool:
+def log_format(ip, msg, exception) -> str:
+    """Форматирование для вывода в три колонки"""
+    return f"{ip.ljust(15)} {msg.ljust(45)} {str(exception)}"
+
+
+def connect_telnet(username, password, new_password, ip, port = 23) -> bool:
     """Подключение Telnet для смены пароля"""
     try:
-        tn = telnetlib.Telnet(ip, port, timeout=TIMEOUT)
+        if (USE_PORT):
+            tn = telnetlib.Telnet(ip, port, timeout=TIMEOUT)
+        else:
+            tn = telnetlib.Telnet(ip, timeout=TIMEOUT)
+            
         tn.read_until(b"login: ", timeout=TIMEOUT)
         tn.write(username.encode("utf-8") + b"\n")
         tn.read_until(b"Password: ")
@@ -62,11 +71,11 @@ def connect_telnet(ip, port, username, password, new_password) -> bool:
         
         # Обработка ошибки авторизации
         if b"Login incorrect" in output:
-            logError.error(f"{ip}:{port} Telnet: Неверное имя пользователя или пароль")
+            logError.error(log_format(ip, "Telnet: Неверное имя пользователя или пароль", ""))
             return False
         
         if WHATIF_MODE:
-            logInfo.info(f"WHATIF: {ip} - Пароль будет изменён на: {new_password}")
+            logInfo.info(f"{ip.ljust(15)} WHATIF: Пароль будет изменён на: {new_password}")
         else:
             tn.write(b"password\n")
             tn.read_until(b"New password: ")
@@ -74,25 +83,29 @@ def connect_telnet(ip, port, username, password, new_password) -> bool:
             tn.read_until(b"Retype new password: ")
             tn.write(new_password.encode("utf-8") + b"\n")
 
-            logInfo.info(f"{ip} - Пароль изменён на: {new_password}")
+            logInfo.info(f"{ip.ljust(15)} - Пароль изменён на: {new_password}")
 
         tn.write(b"exit\n")
         tn.read_all()
         tn.close()
         return True
     except Exception as e:
-        logError.error(f"{ip}:{port} Telnet: Не удалось подключиться к устройству - {str(e)}")
+        logError.error(log_format(ip, "Telnet: Не удалось подключиться к устройству", e))
         return False
 
-def connect_ssh(ip, port, username, password, new_password) -> bool:
+def connect_ssh(username, password, new_password, ip, port = 22) -> bool:
     """Подключение SSH для смены пароля"""
     try:
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        client.connect(ip, port, username=username, password=password, timeout=TIMEOUT)
+        
+        if(USE_PORT):
+            client.connect(ip, port, username=username, password=password, timeout=TIMEOUT)
+        else:
+            client.connect(ip, username=username, password=password, timeout=TIMEOUT)
         
         if WHATIF_MODE:
-            logInfo.info(f"WHATIF: {ip} - Пароль будет изменён на: {new_password}")
+            logInfo.info(f"{ip.ljust(15)} WHATIF: Пароль будет изменён на: {new_password}")
         else:
             stdin, stdout, stderr = client.exec_command(f"passwd")
             stdin.write(password + "\n")
@@ -100,16 +113,23 @@ def connect_ssh(ip, port, username, password, new_password) -> bool:
             stdin.write(new_password + "\n")
             stdin.flush()
 
-            logInfo.info(f"{ip} - Пароль изменён на: {new_password}")
+            logInfo.info(f"{ip.ljust(15)} Пароль изменён на: {new_password}")
 
         client.close()
         return True
     except paramiko.AuthenticationException as e:
-        logError.error(f"{ip}:{port} SSH: Ошибка авторизации - {str(e)}")
+        logError.error(log_format(ip, "SSH: Ошибка авторизации", e))
         return False
     except Exception as e:
-        logError.error(f"{ip}:{port} SSH: Не удалось подключиться к устройству - {str(e)}")
+        logError.error(log_format(ip, "SSH: Не удалось подключиться к устройству", e))
         return False
+
+def connect(username, password, new_password, ip, port = None) -> bool:
+    """Подключение для смены пароля"""
+    if USE_PORT and port is not None:
+        return connect_telnet(username, password, new_password, ip, port) or connect_ssh(username, password, new_password, ip, port)
+    else:
+        return connect_telnet(username, password, new_password, ip) or connect_ssh(username, password, new_password, ip)
 
 def create_results_file(results) -> None:
     """Записывает полученные результаты в xlsx файл"""
@@ -178,8 +198,8 @@ def main() -> None:
     sheet = workbook[SHEET_NAME]
     headers = [cell.value for cell in sheet[1]]
     ip_column_index = headers.index(IP_COLUMN_NAME)
-    port_column_index = headers.index(PORT_COLUMN_NAME)
     password_column_index = headers.index(PASSWORD_COLUMN_NAME)
+    port_column_index = headers.index(PORT_COLUMN_NAME) if USE_PORT else -1
 
     results = []
 
@@ -203,11 +223,8 @@ def main() -> None:
         password_index = (index - 1) % password_count
         new_password = passwords[password_index]
 
-        print(f"{index}/{sheet.max_row-1} Подключение к устройству {ip}:{port}")
-        password_changed = (
-            connect_telnet(ip, port, USER_LOGIN, password, new_password) 
-            or connect_ssh(ip, port, USER_LOGIN, password, new_password)
-        )
+        print(f"{index}/{sheet.max_row-1} Подключение к устройству {ip}")
+        password_changed = connect(USER_LOGIN, password, new_password, ip, port) 
 
         result = {
             "ip": ip,
